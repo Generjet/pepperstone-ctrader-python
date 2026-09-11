@@ -1,0 +1,11 @@
+{
+  "Host": "live-us-eqx-01.p.c-trader.com",
+  "Port": 5212,
+  "SSL": true,
+  "BeginString": "FIX.4.4",
+  "SenderCompID": "live.pepperstone.1057272",
+  "SenderSubID": "TRADE",
+  "TargetCompID": "cServer",
+  "Password": "T@mir4578",
+  "HeartBeat": "30"
+}
