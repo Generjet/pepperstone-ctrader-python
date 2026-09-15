@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import json
+import re
 import sys
 import time
 import uuid
@@ -14,10 +15,30 @@ from ctrader_fix import (
     SecurityListRequest,
     MarketDataRequest,
 )
+from ctrader_fix.fixProtocol import FixProtocol
+from ctrader_fix.messages import ResponseMessage
 
 
 QUOTE_PORT = 5201
 TRADE_PORT = 5202
+
+
+def _patched_dataReceived(self, data):
+    if not hasattr(self, "_buffer"):
+        self._buffer = ""
+    self._buffer += data.decode("ascii")
+    delimiter = self.factory.delimiter
+    pattern = re.compile(re.escape(delimiter) + r"10=\d{3}" + re.escape(delimiter))
+    while True:
+        match = pattern.search(self._buffer)
+        if not match:
+            break
+        raw = self._buffer[: match.end()]
+        self._buffer = self._buffer[match.end():]
+        self.factory.received(ResponseMessage(raw, delimiter))
+
+
+FixProtocol.dataReceived = _patched_dataReceived
 
 
 def lots_to_units(symbol, lots):
@@ -314,7 +335,19 @@ class Bot:
     def on_timeout(self):
         if self._finished:
             return
-        print("[TIMEOUT] Operation did not complete in time")
+        if self.resolved_name is None:
+            if self.symbols:
+                close = sorted(self.symbols.keys(), key=lambda n: n != self.args.currency.upper())
+                print(
+                    f"[TIMEOUT] Symbol '{self.args.currency}' not found in the security list. "
+                    f"Received {len(self.symbols)} symbols. Closest matches: {close[:5]}"
+                )
+            else:
+                print("[TIMEOUT] Security list was never received.")
+        elif self.bid is None or self.ask is None:
+            print("[TIMEOUT] No market data received for the resolved symbol.")
+        else:
+            print("[TIMEOUT] Operation did not complete in time")
         self.finish(1)
 
     def finish(self, code):
