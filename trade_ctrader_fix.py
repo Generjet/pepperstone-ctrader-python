@@ -18,6 +18,10 @@ from ctrader_fix import (
 from ctrader_fix.fixProtocol import FixProtocol
 from ctrader_fix.messages import ResponseMessage
 
+import trade_log
+
+trade_log.configure("trade_ctrader_fix")
+
 
 QUOTE_PORT = 5201
 TRADE_PORT = 5202
@@ -45,7 +49,13 @@ def lots_to_units(symbol, lots):
     upper = str(symbol).upper()
     if upper in ("BTCUSD", "ETHUSD"):
         return int(float(lots))
-    if upper in ("XAUUSD", "XAUEUR", "XAGUSD", "XAGEUR"):
+    if upper in ("XAUUSD", "XAUEUR"):
+        return int(float(lots) * 100)
+    if upper in ("XAGUSD", "XAGEUR"):
+        return int(float(lots) * 5000)
+    if upper in ("ADAUSD", "XRPUSD", "DOGEUSD", "SOLUSD", "AVAXUSD",
+                 "DOTUSD", "LINKUSD", "MATICUSD", "SHIBUSD", "LTCUSD",
+                 "BCHUSD", "UNIUSD", "AAVEUSD", "ATOMUSD", "FILUSD"):
         return int(float(lots) * 100)
     return int(float(lots) * 100000)
 
@@ -95,8 +105,14 @@ class Bot:
         self.sl_sent = False
         self.tp_sent = False
         self.cl_ord_id = None
+        self.sl_cl_ord_id = None
+        self.tp_cl_ord_id = None
+        self.sl_acked = False
+        self.tp_acked = False
+        self.filled = False
         self.units = None
         self._finished = False
+        self.exit_code = 1
         self.quote_client = None
         self.trade_client = None
 
@@ -239,6 +255,11 @@ class Bot:
         side = self.args.side.lower()
         self.validate_sl_tp()
         units = lots_to_units(self.resolved_name, self.args.amount)
+        if units <= 0:
+            print(f"[ERROR] amount {self.args.amount} {self.resolved_name} -> 0 units "
+                  f"(below the symbol's 1-lot size). Use a larger --amount.")
+            self.finish(1)
+            return
         self.units = units
         self.cl_ord_id = f"ord-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}"
         side_value = 1 if side == "buy" else 2
@@ -267,7 +288,7 @@ class Bot:
                 ref = "ask" if side == "buy" else "bid"
                 print(f"[ERROR] Stop loss {sl} is on the wrong side of current {ref} {entry}")
                 self.finish(1)
-                raise SystemExit(1)
+                return
         if self.args.tp is not None:
             tp = float(self.args.tp)
             bad_buy = side == "buy" and tp <= entry
@@ -276,37 +297,68 @@ class Bot:
                 ref = "ask" if side == "buy" else "bid"
                 print(f"[ERROR] Take profit {tp} is on the wrong side of current {ref} {entry}")
                 self.finish(1)
-                raise SystemExit(1)
+                return
 
     def parse_execution_report(self, message):
         client_id = message.getFieldValue(11)
-        if client_id != self.cl_ord_id:
-            return
         exec_type = message.getFieldValue(150)
-        position_id = message.getFieldValue(721)
+        is_market = client_id == self.cl_ord_id
+        is_sl = client_id == self.sl_cl_ord_id
+        is_tp = client_id == self.tp_cl_ord_id
+        if not (is_market or is_sl or is_tp):
+            return
         order_id = message.getFieldValue(37)
         status = message.getFieldValue(39)
-        if exec_type == "8":
-            print(f"[ERROR] Order rejected: {message.getFieldValue(58)}")
-            self.finish(1)
-            return
-        if position_id is not None and self.position_id is None:
-            self.position_id = position_id
-            print(f"[ORDER] Ack order_id={order_id} position_id={position_id} status={status}")
-            self.send_sl_tp()
-        if exec_type == "F":
-            avg = message.getFieldValue(6)
-            print(f"[FILL] position_id={position_id or self.position_id} avg_price={avg}")
-            reactor.callLater(1.5, lambda: self.finish(0))
+        reject_reason = message.getFieldValue(58)
+
+        if is_sl:
+            self.sl_acked = exec_type != "8"
+            tag = "SL"
+        elif is_tp:
+            self.tp_acked = exec_type != "8"
+            tag = "TP"
+        else:
+            tag = None
+        if tag is not None:
+            if exec_type == "8":
+                print(f"[ERROR] {tag} order rejected (clOrdID={client_id}): {reject_reason}")
+                self.finish(1)
+                return
+            if exec_type in ("0", "I"):
+                print(f"[{tag}] {tag} order ack order_id={order_id} status={status}")
+            elif exec_type == "F":
+                print(f"[{tag}] {tag} order filled order_id={order_id}")
+            else:
+                print(f"[{tag}] {tag} order status order_id={order_id} status={status}")
+
+        if is_market:
+            position_id = message.getFieldValue(721)
+            if position_id is not None and self.position_id is None:
+                self.position_id = position_id
+                print(f"[ORDER] Ack order_id={order_id} position_id={position_id} status={status}")
+            if exec_type == "8":
+                print(f"[ERROR] Order rejected: {reject_reason}")
+                self.finish(1)
+                return
+            if exec_type == "F":
+                avg = message.getFieldValue(6)
+                print(f"[FILL] position_id={position_id or self.position_id} avg_price={avg}")
+                if not self.filled:
+                    self.filled = True
+                    self.send_sl_tp()
+        elif is_sl or is_tp:
+            if exec_type != "8":
+                self.maybe_finish()
 
     def send_sl_tp(self):
-        if self.position_id is None:
+        if self.position_id is None or not self.filled:
             return
         opposite = 2 if self.args.side.lower() == "buy" else 1
         if self.args.sl is not None and not self.sl_sent:
             self.sl_sent = True
+            self.sl_cl_ord_id = f"sl-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}"
             req = NewOrderSingle(self.trade_cfg)
-            req.ClOrdID = f"sl-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}"
+            req.ClOrdID = self.sl_cl_ord_id
             req.Symbol = self.symbol_info[0]
             req.Side = opposite
             req.OrderQty = self.units
@@ -319,8 +371,9 @@ class Bot:
             self.trade_client.send(req).addErrback(self.on_send_error)
         if self.args.tp is not None and not self.tp_sent:
             self.tp_sent = True
+            self.tp_cl_ord_id = f"tp-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}"
             req = NewOrderSingle(self.trade_cfg)
-            req.ClOrdID = f"tp-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}"
+            req.ClOrdID = self.tp_cl_ord_id
             req.Symbol = self.symbol_info[0]
             req.Side = opposite
             req.OrderQty = self.units
@@ -331,6 +384,21 @@ class Bot:
             req.Designation = "ctrader-fix-tp"
             print(f"[TP] Attaching take profit {self.args.tp} to position {self.position_id}")
             self.trade_client.send(req).addErrback(self.on_send_error)
+        self.maybe_finish()
+
+    def maybe_finish(self):
+        if not self.filled or self._finished:
+            return
+        need_sl = self.args.sl is not None
+        need_tp = self.args.tp is not None
+        if not need_sl and not need_tp:
+            self.finish(0)
+            return
+        if self.sl_sent and need_sl and not self.sl_acked:
+            return
+        if self.tp_sent and need_tp and not self.tp_acked:
+            return
+        self.finish(0)
 
     def on_timeout(self):
         if self._finished:
@@ -354,6 +422,7 @@ class Bot:
         if self._finished:
             return
         self._finished = True
+        self.exit_code = code
         if self.trade_client is not None:
             try:
                 self.trade_client.stopService()
@@ -365,7 +434,6 @@ class Bot:
             except Exception:
                 pass
         reactor.stop()
-        sys.exit(code)
 
 
 def build_parser():
@@ -378,8 +446,12 @@ def build_parser():
     parser.add_argument("--sl", type=float, help="absolute stop loss price")
     parser.add_argument("--tp", type=float, help="absolute take profit price")
     parser.add_argument("--price-only", action="store_true", help="only print bid/ask and exit")
-    parser.add_argument("--quote-config", default="config-quote.json", help="quote session JSON config")
-    parser.add_argument("--trade-config", default="config-trade.json", help="trade session JSON config")
+    parser.add_argument("--mode", choices=["live", "demo"], default="live",
+                        help="account mode (default live)")
+    parser.add_argument("--quote-config", default=None,
+                        help="quote session JSON config (default: config-quote.json or demo-config-quote.json by --mode)")
+    parser.add_argument("--trade-config", default=None,
+                        help="trade session JSON config (default: config-trade.json or demo-config-trade.json by --mode)")
     parser.add_argument("--host", help="FIX host (default from trade config)")
     parser.add_argument("--quote-port", type=int, default=QUOTE_PORT, help=f"quote port (default {QUOTE_PORT})")
     parser.add_argument("--trade-port", type=int, default=TRADE_PORT, help=f"trade port (default {TRADE_PORT})")
@@ -396,8 +468,15 @@ def main():
     if not args.price_only and not args.amount:
         parser.error("--amount is required unless --price-only is used")
 
-    quote_cfg = load_config(args.quote_config)
-    trade_cfg = load_config(args.trade_config)
+    mode = args.mode.lower()
+    quote_path = args.quote_config or ("demo-config-quote.json" if mode == "demo" else "config-quote.json")
+    trade_path = args.trade_config or ("demo-config-trade.json" if mode == "demo" else "config-trade.json")
+    print(f"[MODE] {mode.upper()} trading")
+    print(f"[MODE] quote config: {quote_path}")
+    print(f"[MODE] trade config: {trade_path}")
+
+    quote_cfg = load_config(quote_path)
+    trade_cfg = load_config(trade_path)
     host = args.host or trade_cfg["Host"]
 
     bot = Bot(args, quote_cfg, trade_cfg)
@@ -418,6 +497,7 @@ def main():
     trade_client.startService()
     reactor.callLater(args.timeout, bot.on_timeout)
     reactor.run()
+    sys.exit(bot.exit_code)
 
 
 if __name__ == "__main__":
