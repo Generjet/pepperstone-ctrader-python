@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FX Trading Bot — Pepperstone</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#111827; color:#e5e7eb; font-family:'Segoe UI',Arial,sans-serif; font-size:14px; }
+header { display:flex; align-items:center; justify-content:space-between; padding:12px 20px;
+  background:#0b1220; border-bottom:1px solid #1f2937; }
+header h1 { font-size:16px; font-weight:600; color:#c7d2fe; }
+#hdrBadge { font-size:12px; padding:4px 10px; border-radius:12px; background:#374151; color:#d1d5db; }
+#hdrBadge.run { background:#065f46; color:#a7f3d0; }
+nav { display:flex; gap:8px; padding:10px 20px 0; }
+nav .tab { padding:8px 18px; border:1px solid #1f2937; border-bottom:none; background:#111827;
+  color:#9ca3af; cursor:pointer; border-radius:8px 8px 0 0; font-size:13px; }
+nav .tab.active { background:#1f2937; color:#fff; font-weight:600; }
+main { padding:14px 20px 40px; }
+section.card { background:#0f172a; border:1px solid #1f2937; border-radius:10px; padding:16px; margin-bottom:16px; }
+h3 { font-size:13px; color:#c7d2fe; margin-bottom:12px; }
+h3 span { color:#6b7280; font-weight:400; font-size:12px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; }
+label { display:block; font-size:12px; color:#9ca3af; margin-bottom:4px; }
+select, input[type=number] { width:100%; padding:7px 8px; border:1px solid #374151; border-radius:6px;
+  background:#111827; color:#e5e7eb; font-size:13px; }
+.actions { margin-top:14px; display:flex; gap:10px; flex-wrap:wrap; }
+button { padding:8px 18px; border:none; border-radius:6px; cursor:pointer; font-size:13px; font-weight:600;
+  background:#374151; color:#fff; }
+button:disabled { opacity:.5; cursor:not-allowed; }
+button.primary { background:#2563eb; }
+button.green { background:#16a34a; }
+button.red { background:#dc2626; }
+#statusCard { font-size:13px; line-height:1.7; }
+#statusCard .row { display:flex; gap:8px; }
+#statusCard .k { color:#6b7280; min-width:130px; }
+#statusCard .v { color:#e5e7eb; }
+#statusCard .v.good { color:#4ade80; }
+#statusCard .v.bad { color:#f87171; }
+#systemLog { background:#0b1220; border:1px solid #1f2937; border-radius:6px; padding:10px;
+  height:220px; overflow-y:auto; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; line-height:1.5; }
+#systemLog .line { color:#9ca3af; }
+#systemLog .line .t { color:#6b7280; margin-right:8px; }
+#chart { width:100%; height:70vh; }
+table { width:100%; border-collapse:collapse; font-size:12px; }
+th, td { padding:6px 8px; border-bottom:1px solid #1f2937; text-align:left; white-space:nowrap; }
+th { color:#9ca3af; font-weight:600; background:#0b1220; }
+td.num { text-align:right; }
+tr.closed td.good { color:#4ade80; }
+tr.closed td.bad { color:#f87171; }
+tr.open { background:#1e293b; }
+#tradesSummary { display:flex; gap:20px; margin-bottom:10px; font-size:13px; }
+#tradesSummary .s { color:#6b7280; }
+#tradesSummary .s b { color:#e5e7eb; }
+.empty { color:#6b7280; padding:12px 0; }
+a.file { color:#93c5fd; }
+</style>
+</head>
+<body>
+<header>
+  <h1>FX Trading Bot — Pepperstone cTrader</h1>
+  <span id="hdrBadge">stopped</span>
+</header>
+<nav>
+  <button class="tab active" data-tab="top">TOP</button>
+  <button class="tab" data-tab="trade">TRADE</button>
+  <button class="tab" data-tab="trades">TRADES</button>
+</nav>
+<main>
+
+  <section data-page="top" class="card">
+    <h3>Settings</h3>
+    <div class="grid" id="settingsGrid">
+      <div><label>Currency</label><select id="sSymbol"></select></div>
+      <div><label>Interval</label><select id="sInterval"></select></div>
+      <div><label>Lots</label><input id="sLots" type="number" value="0.01" step="0.01" min="0.001"></div>
+      <div><label>Strategy</label><select id="sStrategy"></select></div>
+      <div><label>Mode</label><select id="sMode"><option value="demo">demo</option><option value="live">live</option></select></div>
+      <div><label>Trade script</label><select id="sScript"></select></div>
+      <div><label>Check every (seconds)</label><input id="sPoll" type="number" value="60" min="5" step="5"></div>
+      <div><label>RSI period</label><input id="sRsiPeriod" type="number" value="14" min="2"></div>
+      <div><label>RSI ceiling</label><input id="sRsiCeil" type="number" value="70"></div>
+      <div><label>RSI floor</label><input id="sRsiFloor" type="number" value="30"></div>
+      <div><label>Stoch K</label><input id="sKPeriod" type="number" value="14" min="2"></div>
+      <div><label>Stoch %K slow</label><input id="sKSlow" type="number" value="3" min="1"></div>
+      <div><label>Stoch %D</label><input id="sDPeriod" type="number" value="3" min="1"></div>
+      <div><label>HMA period</label><input id="sHMAPeriod" type="number" value="9" min="2"></div>
+    </div>
+    <div class="actions">
+      <button id="btnStart" class="green">Start</button>
+      <button id="btnStop" class="red" disabled>Stop</button>
+      <button id="btnExport">Export CSV + HTML</button>
+      <button id="btnRefresh">Refresh chart</button>
+    </div>
+    <p style="font-size:11px;color:#6b7280;margin-top:8px">
+      Buy/sell orders are placed by calling the Pepperstone python script.
+      A SELL is only executed when the live broker bid is higher than the buy price.
+    </p>
+  </section>
+
+  <section data-page="top" class="card">
+    <h3>Status</h3>
+    <div id="statusCard">loading…</div>
+  </section>
+
+  <section data-page="top" class="card">
+    <h3>Log</h3>
+    <div id="systemLog"></div>
+  </section>
+
+  <section data-page="trade" class="card">
+    <h3>Candlestick + Indicators <span id="chartInfo"></span></h3>
+    <div id="chart"></div>
+  </section>
+
+  <section data-page="trades" class="card">
+    <h3>Trade history <span id="tradesInfo"></span></h3>
+    <div id="tradesSummary"></div>
+    <table>
+      <thead><tr>
+        <th>#</th><th>Symbol</th><th>Strategy</th><th>Lots</th><th>Mode</th>
+        <th>Buy date</th><th>Buy price</th><th>Sell date</th><th>Sell price</th>
+        <th>Profit</th><th>P/L %</th><th>Status</th><th>Ticket</th>
+      </tr></thead>
+      <tbody id="tradesBody"></tbody>
+    </table>
+    <div id="tradesEmpty" class="empty">No trades yet.</div>
+  </section>
+
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let state = { params: null, lastPrices: {} };
+let currentTab = 'top';
+
+async function jf(url, opts) {
+  const r = await fetch(url, opts);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function digitsFor(s){ return /JPY/.test(String(s).toUpperCase()) ? 3 : 5; }
+function fmt(n, p){ if (n == null || n === undefined || isNaN(n)) return '—'; return Number(n).toLocaleString(undefined, {maximumFractionDigits: p}); }
+function fmtAmt(n, p){ if (n == null || n === undefined || isNaN(n)) return '—'; return Number(n).toLocaleString(undefined, {minimumFractionDigits: p, maximumFractionDigits: p}); }
+
+// ---------- tabs ----------
+function showTab(tab){
+  currentTab = tab;
+  document.querySelectorAll('nav .tab').forEach(x => x.classList.toggle('active', x.dataset.tab === tab));
+  document.querySelectorAll('[data-page]').forEach(el => {
+    el.style.display = el.dataset.page === tab ? 'block' : 'none';
+  });
+  if (tab === 'trade') loadChart();
+  if (tab === 'trades') loadTrades();
+}
+document.querySelectorAll('nav .tab').forEach(t => {
+  t.onclick = () => showTab(t.dataset.tab);
+});
+
+// ---------- meta ----------
+async function loadMeta(){
+  const m = await jf('/api/meta');
+  const sym = $('sSymbol'); m.symbols.forEach((s,i)=>{ sym.appendChild(new Option(s,s)); });
+  $('sStrategy').innerHTML = m.strategies.map(st => `<option value="${esc(st.id)}">${esc(st.name)}</option>`).join('');
+  $('sScript').innerHTML = m.scripts.map(sc => `<option value="${esc(sc)}">${esc(sc)}</option>`).join('');
+  const iv = $('sInterval'); m.intervals.forEach(i=>{ iv.appendChild(new Option(i,i)); });
+  if (m.defaults) {
+    sym.value = m.defaults.symbol; iv.value = m.defaults.interval;
+    $('sLots').value = m.defaults.lots; $('sStrategy').value = m.defaults.strategyId;
+    $('sMode').value = m.defaults.mode; $('sScript').value = m.defaults.script;
+    $('sPoll').value = m.defaults.pollSeconds;
+    $('sRsiPeriod').value = m.defaults.rsiPeriod; $('sRsiCeil').value = m.defaults.rsiCeil; $('sRsiFloor').value = m.defaults.rsiFloor;
+    $('sKPeriod').value = m.defaults.kPeriod; $('sKSlow').value = m.defaults.kSlow;
+    $('sDPeriod').value = m.defaults.dPeriod; $('sHMAPeriod').value = m.defaults.hmaPeriod;
+  }
+}
+
+// ---------- chart ----------
+async function loadChart(){
+  const symbol = $('sSymbol').value, interval = $('sInterval').value;
+  try {
+    const d = await jf(`/api/data?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=500`);
+    plot(d);
+    $('chartInfo').textContent = `${d.symbol} (${d.interval}) · ${d.rows.length} candles · updated ${d.lastUpdated}`;
+  } catch(e){ $('chartInfo').textContent = 'chart error: ' + e.message; }
+}
+
+function plot(d){
+  const rows = d.rows;
+  const t = rows.map(r => r.t), o = rows.map(r=>r.o), h = rows.map(r=>r.h),
+        l = rows.map(r=>r.l), c = rows.map(r=>r.c), hma = rows.map(r=>r.hma),
+        rsi = rows.map(r=>r.rsi), stK = rows.map(r=>r.stochK), stD = rows.map(r=>r.stochD);
+  const buyT=[], buyP=[], sellT=[], sellP=[];
+  const dp = digitsFor(d.symbol);
+  rows.forEach(r => {
+    if (r.buy) { buyT.push(r.t); buyP.push(r.c); }
+    if (r.sell) { sellT.push(r.t); sellP.push(r.c); }
+  });
+  const traces = [
+    { x:t, open:o, high:h, low:l, close:c, type:'candlestick', xaxis:'x', yaxis:'y', name:'Price',
+      increasing:{line:{color:'#26a69a'}}, decreasing:{line:{color:'#ef5350'}} },
+    { x:t, y:hma, type:'scatter', xaxis:'x', yaxis:'y', name:'HMA', line:{color:'#ffee58', width:2} },
+    { x:buyT, y:buyP, mode:'markers', type:'scatter', xaxis:'x', yaxis:'y', name:'Buy',
+      marker:{symbol:'triangle-up', size:14, color:'#26a69a', line:{color:'#fff', width:1}} },
+    { x:sellT, y:sellP, mode:'markers', type:'scatter', xaxis:'x', yaxis:'y', name:'Sell',
+      marker:{symbol:'triangle-down', size:14, color:'#ef5350', line:{color:'#fff', width:1}} },
+    { x:t, y:rsi, type:'scatter', xaxis:'x2', yaxis:'y2', name:'RSI', line:{color:'#7c4dff', width:2} },
+    { x:t, y:t.map(()=>70), type:'scatter', xaxis:'x2', yaxis:'y2', name:'RSI 70', line:{color:'#ef5350', width:1, dash:'dash'} },
+    { x:t, y:t.map(()=>30), type:'scatter', xaxis:'x2', yaxis:'y2', name:'RSI 30', line:{color:'#26a69a', width:1, dash:'dash'} },
+    { x:t, y:stK, type:'scatter', xaxis:'x3', yaxis:'y3', name:'Stoch %K', line:{color:'#42a5f5', width:2} },
+    { x:t, y:stD, type:'scatter', xaxis:'x3', yaxis:'y3', name:'Stoch %D', line:{color:'#ffa726', width:2} },
+    { x:t, y:t.map(()=>80), type:'scatter', xaxis:'x3', yaxis:'y3', name:'80', line:{color:'#ef5350', width:1, dash:'dash'} },
+    { x:t, y:t.map(()=>20), type:'scatter', xaxis:'x3', yaxis:'y3', name:'20', line:{color:'#26a69a', width:1, dash:'dash'} },
+  ];
+  const layout = {
+    title:{text:`${d.symbol} (${d.interval})`, font:{size:14, color:'#ccc'}},
+    paper_bgcolor:'#0f172a', plot_bgcolor:'#111a2e', font:{color:'#9ca3af', size:10},
+    grid:{rows:3, columns:1, pattern:'independent', roworder:'top to bottom'},
+    xaxis:{rangeslider:{visible:false}, gridcolor:'#1f2937', linecolor:'#374151'},
+    yaxis:{title:'Price', gridcolor:'#1f2937', linecolor:'#374151', side:'right'},
+    xaxis2:{gridcolor:'#1f2937', linecolor:'#374151'},
+    yaxis2:{title:'RSI', range:[0,100], gridcolor:'#1f2937', linecolor:'#374151', side:'right'},
+    xaxis3:{gridcolor:'#1f2937', linecolor:'#374151'},
+    yaxis3:{title:'Stochastic', range:[0,100], gridcolor:'#1f2937', linecolor:'#374151', side:'right'},
+    legend:{orientation:'h', y:1.02, font:{size:9, color:'#9ca3af'}},
+    dragmode:'zoom', hovermode:'x unified', displaylogo:false, margin:{l:60,r:60,t:50,b:40}
+  };
+  Plotly.react('chart', traces, layout, {responsive:true});
+}
+
+// ---------- status ----------
+function renderStatus(s){
+  state.status = s;
+  const badge = $('hdrBadge');
+  badge.textContent = s.running ? '● RUNNING — ' + s.params.symbol + ' (' + s.params.interval + ')' : '● stopped';
+  badge.className = s.running ? 'run' : '';
+  $('btnStart').disabled = s.running;
+  $('btnStop').disabled = !s.running;
+  const p = s.params || {}, op = s.openTrade;
+  const rows = [];
+  rows.push(['Bot', s.running ? '<span class="v good">running</span>' : '<span class="v">stopped</span>']);
+  rows.push(['Instrument', esc(p.symbol) + ' (' + esc(p.interval) + ') &middot; ' + esc(p.mode) + ' &middot; ' + fmtAmt(p.lots,2) + ' lots']);
+  rows.push(['Strategy', esc((p.strategyId||'').replace('_',' + '))]);
+  rows.push(['Script', esc(p.script || '')]);
+  rows.push(['Last check', esc(s.lastCheck || '—')]);
+  rows.push(['Last price', fmtPick(s, s.params, s.lastPrice)]);
+  if (s.lastBid) rows.push(['Broker bid / ask', fmtAmt(s.lastBid, dp(s.params)) + ' / ' + fmtAmt(s.lastAsk, dp(s.params))]);
+  rows.push(['Last signal', esc(s.lastSignal || '—')]);
+  if (s.lastError) rows.push(['Last error', '<span class="v bad">' + esc(s.lastError) + '</span>']);
+  if (op) {
+    rows.push(['Open position', 'bought <b>' + fmtAmt(op.lots,2) + '</b> ' + esc(op.symbol) + ' at <b>' + fmtAmt(op.buyPrice, dp(p)) + '</b> on ' + esc(op.buyDate)]);
+  } else {
+    rows.push(['Open position', '<span class="v">none</span>']);
+  }
+  if (s.files && (s.files.csv || s.files.html)) {
+    const f = s.files;
+    rows.push(['Last export', (f.csv ? '<a class="file" target="_blank" href="/files/' + esc(f.csv.split(/[\\/]/).pop()) + '">csv</a>' : '') +
+      (f.html ? ' · <a class="file" target="_blank" href="/files/' + esc(f.html.split(/[\\/]/).pop()) + '">html report</a>' : '')]);
+  }
+  $('statusCard').innerHTML = rows.map(r => '<div class="row"><span class="k">' + r[0] + '</span><span class="v">' + r[1] + '</span></div>').join('');
+  // mirror settings when not running
+  if (!s.running) syncFromStatus(s);
+}
+function fmtPick(s, p, v){ return fmtAmt(v, dp(p)); }
+function dp(p){ return (p && /JPY/.test(String(p.symbol).toUpperCase())) ? 3 : 5; }
+function syncFromStatus(s){
+  const p = s.params; if (!p) return;
+  if (!$('sSymbol').value) { $('sSymbol').value = p.symbol; }
+  if (!$('sInterval').value) { $('sInterval').value = p.interval; }
+}
+
+// ---------- trades ----------
+async function loadTrades(){
+  const list = await jf('/api/trades');
+  const body = $('tradesBody');
+  body.innerHTML = '';
+  $('tradesEmpty').style.display = list.length ? 'none' : 'block';
+  $('tradesInfo').textContent = list.length + ' trades';
+  let closed = 0, wins = 0, profit = 0;
+  list.forEach((tr, i) => {
+    if (tr.status === 'closed') { closed++; if (tr.profitPoints > 0) wins++; profit += tr.profitPoints; }
+    const sell = tr.sellDate ? fmtAmt(tr.sellPrice, dp(tr)) : '—';
+    const cls = tr.status === 'closed' ? 'closed' : 'open';
+    const profitCls = tr.profitPoints > 0 ? 'good' : (tr.profitPoints < 0 ? 'bad' : '');
+    body.insertAdjacentHTML('beforeend',
+      `<tr class="${cls}">
+        <td>${list.length-i}</td><td>${esc(tr.symbol)}</td>
+        <td>${esc((tr.strategy||'').replace('_',' + '))}</td>
+        <td class="num">${fmtAmt(tr.lots,2)}</td><td>${esc(tr.mode||'')}</td>
+        <td>${esc(tr.buyDate)}</td><td class="num">${fmtAmt(tr.buyPrice, dp(tr))}</td>
+        <td>${esc(tr.sellDate||'—')}</td><td class="num">${sell}</td>
+        <td class="num ${profitCls}">${tr.sellDate ? fmt(tr.profitPoints, dp(tr)) : '—'}</td>
+        <td class="num ${profitCls}">${tr.sellDate ? fmt(tr.profitPct, 3) + '%' : '—'}</td>
+        <td>${tr.status}</td><td>${esc(tr.ticket||'')}</td>
+      </tr>`);
+  });
+  $('tradesSummary').innerHTML =
+    `<span class="s">Total <b>${list.length}</b></span>` +
+    `<span class="s">Closed <b>${closed}</b></span>` +
+    `<span class="s">Wins <b>${wins}</b></span>` +
+    `<span class="s">Net profit <b ${profit>0?'style=color:#4ade80':(profit<0?'style=color:#f87171':'')}>${fmt(profit, dp(list[list.length-1]||{}))}</b></span>`;
+}
+function dp(tr){ return tr && tr.symbol && /JPY/.test(tr.symbol.toUpperCase()) ? 3 : 5; }
+
+// ---------- log ----------
+function appendLog(l, prepend){
+  const box = $('systemLog');
+  const div = document.createElement('div');
+  div.className = 'line';
+  div.innerHTML = `<span class="t">${esc(l.at)}</span>${esc(l.msg)}`;
+  if (prepend) { box.insertBefore(div, box.firstChild); } else { box.appendChild(div); }
+  while (box.children.length > 800) box.removeChild(box.firstChild);
+  if (!prepend) box.scrollTop = box.scrollHeight;
+}
+async function loadLogs(){ try { const d = await jf('/api/logs?n=200'); d.logs.forEach(l => appendLog(l)); } catch(e){} }
+
+// ---------- actions ----------
+function collectParams(){
+  return {
+    symbol: $('sSymbol').value, interval: $('sInterval').value,
+    lots: parseFloat($('sLots').value) || 0.01,
+    strategyId: $('sStrategy').value, mode: $('sMode').value, script: $('sScript').value,
+    pollSeconds: parseInt($('sPoll').value,10) || 60,
+    rsiPeriod: parseInt($('sRsiPeriod').value,10) || 14,
+    rsiCeil: parseFloat($('sRsiCeil').value) || 70,
+    rsiFloor: parseFloat($('sRsiFloor').value) || 30,
+    kPeriod: parseInt($('sKPeriod').value,10) || 14,
+    kSlow: parseInt($('sKSlow').value,10) || 3,
+    dPeriod: parseInt($('sDPeriod').value,10) || 3,
+    hmaPeriod: parseInt($('sHMAPeriod').value,10) || 9
+  };
+}
+$('btnStart').onclick = async () => {
+  try {
+    const s = await jf('/api/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(collectParams()) });
+    renderStatus(s); loadChart(); loadTrades();
+  } catch(e){ alert('Start failed: ' + e.message); }
+};
+$('btnStop').onclick = async () => {
+  try { const s = await jf('/api/stop', {method:'POST'}); renderStatus(s); } catch(e){ alert('Stop failed: ' + e.message); }
+};
+$('btnExport').onclick = async () => {
+  try {
+    const s = await jf('/api/export', {method:'POST'});
+    renderStatus(s);
+    alert('Exported:\n' + s.files.csv + '\n' + s.files.html);
+  } catch(e){ alert('Export failed: ' + e.message); }
+};
+$('btnRefresh').onclick = () => loadChart();
+$('btnExport').disabled = false;
+
+// ---------- SSE ----------
+function connectSSE(){
+  const es = new EventSource('/api/stream');
+  es.addEventListener('status', ev => { try { renderStatus(JSON.parse(ev.data)); } catch(e){} });
+  es.addEventListener('data', ev => {
+    if (currentTab === 'trade' || (state.status && state.status.running)) loadChart();
+  });
+  es.addEventListener('trades', ev => { if ($('tab-trades').style.display === 'block') loadTrades(); });
+  es.addEventListener('log', ev => { try { appendLog(JSON.parse(ev.data)); } catch(e){} });
+  es.onerror = () => { es.close(); setTimeout(connectSSE, 3000); };
+}
+
+// ---------- boot ----------
+(async function init(){
+  try {
+    await loadMeta();
+    await Promise.all([loadLogs(), loadTrades(), jf('/api/status').then(renderStatus)]);
+    loadChart();
+    connectSSE();
+  } catch(e){ console.error(e); }
+})();
+setInterval(() => { if (state.status && state.status.running) loadChart(); }, 60000);
+</script>
+</body>
+</html>

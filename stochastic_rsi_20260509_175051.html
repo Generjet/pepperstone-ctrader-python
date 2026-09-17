@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ETHUSDT (1h) — RSI + Stochastic Analysis</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', Arial, sans-serif; padding: 20px; }
+h1 { text-align: center; margin-bottom: 16px; font-size: 18px; color: #ccc; }
+#chart { width: 100%; height: 100vh; }
+</style>
+</head>
+<body>
+<h1>ETHUSDT (1h) — RSI + Stochastic Analysis</h1>
+<div id="chart"></div>
+<script>
+var times=[];
+var opens=[]; var highs=[]; var lows=[]; var closes=[];
+var rsi=[]; var stochK=[]; var stochD=[];
+var buyTimes=[]; var buyPrices=[];
+var sellTimes=[]; var sellPrices=[];
+
+var rsiCeil=70; var rsiFloor=30;
+
+var traceCandle = {
+    x: times, open: opens, high: highs, low: lows, close: closes,
+    type: 'candlestick', xaxis: 'x', yaxis: 'y',
+    name: 'Price', increasing: {line: {color: '#26a69a'}},
+    decreasing: {line: {color: '#ef5350'}}
+};
+
+var traceBuy = {
+    x: buyTimes, y: buyPrices,
+    mode: 'markers', type: 'scatter', xaxis: 'x', yaxis: 'y',
+    name: 'Buy', marker: {symbol: 'triangle-up', size: 14, color: '#26a69a', line: {color: '#fff', width: 1}}
+};
+
+var traceSell = {
+    x: sellTimes, y: sellPrices,
+    mode: 'markers', type: 'scatter', xaxis: 'x', yaxis: 'y',
+    name: 'Sell', marker: {symbol: 'triangle-down', size: 14, color: '#ef5350', line: {color: '#fff', width: 1}}
+};
+
+var traceRSI = {
+    x: times, y: rsi, type: 'scatter', xaxis: 'x2', yaxis: 'y2',
+    name: 'RSI', line: {color: '#7c4dff', width: 2}
+};
+
+var traceRSICeil = {
+    x: times, y: times.map(function(){return rsiCeil}),
+    type: 'scatter', xaxis: 'x2', yaxis: 'y2',
+    name: 'Ceil ('+rsiCeil+')', line: {color: '#ef5350', width: 1, dash: 'dash'}
+};
+
+var traceRSIFloor = {
+    x: times, y: times.map(function(){return rsiFloor}),
+    type: 'scatter', xaxis: 'x2', yaxis: 'y2',
+    name: 'Floor ('+rsiFloor+')', line: {color: '#26a69a', width: 1, dash: 'dash'}
+};
+
+var traceStochK = {
+    x: times, y: stochK, type: 'scatter', xaxis: 'x3', yaxis: 'y3',
+    name: 'Stoch %K', line: {color: '#42a5f5', width: 2}
+};
+
+var traceStochD = {
+    x: times, y: stochD, type: 'scatter', xaxis: 'x3', yaxis: 'y3',
+    name: 'Stoch %D', line: {color: '#ffa726', width: 2}
+};
+
+var traceUpper = {
+    x: times, y: times.map(function(){return 80}),
+    type: 'scatter', xaxis: 'x3', yaxis: 'y3',
+    name: 'Overbought (80)', line: {color: '#ef5350', width: 1, dash: 'dash'}
+};
+
+var traceLower = {
+    x: times, y: times.map(function(){return 20}),
+    type: 'scatter', xaxis: 'x3', yaxis: 'y3',
+    name: 'Oversold (20)', line: {color: '#26a69a', width: 1, dash: 'dash'}
+};
+
+var layout = {
+    title: {text: 'ETHUSDT (1h) — RSI + Stochastic Analysis', font: {size: 14, color: '#ccc'}},
+    paper_bgcolor: '#1a1a2e', plot_bgcolor: '#16213e',
+    font: {color: '#aaa', size: 10},
+    grid: {rows: 3, columns: 1, pattern: 'independent', roworder: 'top to bottom'},
+    xaxis: {rangeslider: {visible: false}, gridcolor: '#2a2a4a', linecolor: '#333'},
+    yaxis: {title: 'Price', gridcolor: '#2a2a4a', linecolor: '#333', side: 'right'},
+    xaxis2: {title: 'Date', gridcolor: '#2a2a4a', linecolor: '#333'},
+    yaxis2: {title: 'RSI', range: [0,100], gridcolor: '#2a2a4a', linecolor: '#333', side: 'right'},
+    xaxis3: {title: 'Date', gridcolor: '#2a2a4a', linecolor: '#333'},
+    yaxis3: {title: 'Stochastic', range: [0,100], gridcolor: '#2a2a4a', linecolor: '#333', side: 'right'},
+    legend: {orientation: 'h', y: 1.02, font: {size: 9, color: '#aaa'}},
+    dragmode: 'zoom',
+    hovermode: 'x unified'
+};
+
+var traces = [traceCandle, traceBuy, traceSell, traceRSI, traceRSICeil, traceRSIFloor, traceStochK, traceStochD, traceUpper, traceLower];
+Plotly.newPlot('chart', traces, layout, {responsive: true});
+</script>
+</body>
+</html>
