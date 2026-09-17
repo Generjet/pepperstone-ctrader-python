@@ -24,14 +24,28 @@ import time
 
 _LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log")
 
+try:
+    _DEFAULT_WAIT_TIMEOUT = int(os.environ.get("TRADE_WAIT_TIMEOUT", "15"))
+except ValueError:
+    _DEFAULT_WAIT_TIMEOUT = 15
+
 
 class OrderRejected(BaseException):
-    """Raised when the broker rejects a submitted order (e.g. insufficient funds).
+    """Raised when a submitted order is rejected or times out waiting for a fill.
 
     Deliberately subclasses BaseException, NOT Exception: the SinanProjectCT /
     ejtraderCT fill-wait loop swallows `except Exception` (while True/continue),
     so a normal Exception would hang forever. BaseException bypasses it.
+
+    `clid` is the library order id (ClOrdId) so the caller can cancel a
+    still-pending order on timeout; `timeout` distinguishes a dead-broker fill
+    timeout from an actual broker rejection (e.g. insufficient funds).
     """
+
+    def __init__(self, message, clid=None, timeout=False):
+        super().__init__(message)
+        self.clid = clid
+        self.timeout = timeout
 
 
 class _RejectDict(dict):
@@ -54,15 +68,17 @@ class _RejectDict(dict):
 
     def __missing__(self, key):
         if key in self._rejected:
-            raise OrderRejected(self._rejected[key])
+            raise OrderRejected(self._rejected[key], clid=key)
         if self._deadline is not None and time.time() > self._deadline:
             raise OrderRejected(
-                f"no fill and no rejection within {self._wait}s for order {key}"
+                f"no fill and no rejection within {self._wait}s for order {key}",
+                clid=key,
+                timeout=True,
             )
         raise KeyError(key)
 
 
-def _arm_reject(instance, timeout=60):
+def _arm_reject(instance, timeout=_DEFAULT_WAIT_TIMEOUT):
     """Ensure fix.rejected exists and origin_to_pos_id raises on rejection/fill-wait timeout."""
     fix = getattr(instance, "fix", None)
     if fix is None:
@@ -77,17 +93,35 @@ def _arm_reject(instance, timeout=60):
     fix.origin_to_pos_id._wait = timeout
 
 
-def _wait_fill_or_reject(instance, ticket, timeout=15):
+def _wait_fill_or_reject(instance, ticket, timeout=_DEFAULT_WAIT_TIMEOUT):
     """Wait for the fire-and-forget order; raise on rejection or timeout."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         rejected = getattr(instance.fix, "rejected", {})
         if ticket in rejected:
-            raise OrderRejected(rejected[ticket])
+            raise OrderRejected(rejected[ticket], clid=ticket)
         if ticket in getattr(instance.fix, "origin_to_pos_id", {}):
             return
         time.sleep(0.1)
-    raise OrderRejected(f"no fill and no rejection within {timeout}s for order {ticket}")
+    raise OrderRejected(
+        f"no fill and no rejection within {timeout}s for order {ticket}",
+        clid=ticket,
+        timeout=True,
+    )
+
+
+def _cancel_pending(instance, clid):
+    """Send a FIX OrderCancelRequest (35=F) for a still-pending order."""
+    fix = getattr(instance, "fix", None)
+    cancel = getattr(fix, "cancel_order", None)
+    if cancel is None:
+        logging.warning("[ORDER] Cannot cancel %s: cancel_order() unavailable", clid)
+        return
+    try:
+        cancel(clid)
+        logging.warning("[ORDER] Cancel requested for pending order %s", clid)
+    except Exception as exc:
+        logging.error("[ORDER] Cancel failed for %s: %s", clid, exc)
 
 
 class _Tee:
@@ -220,7 +254,11 @@ def patch_order_methods(module):
     "TypeError: float() argument ... not 'NoneType'" and drops the SL entirely.
     These wrappers call trade() with the correct positional mapping, coerce
     unset SL/TP to 0 so the library's float() guards work, and surface broker
-    rejections as OrderRejected instead of hanging.
+    rejections as OrderRejected instead of hanging. A hard fill-wait deadline
+    (TRADE_WAIT_TIMEOUT, default 15s) is enforced: if the broker neither fills
+    nor rejects in time, the pending order is cancelled with 35=F before the
+    script raises OrderRejected. Real rejections (e.g. insufficient funds) are
+    never cancelled - they are already dead at the broker.
     """
     cls = getattr(module, "Ctrader", None)
     if cls is None:
@@ -229,22 +267,36 @@ def patch_order_methods(module):
 
     def _fixed_buy(self, symbol, volume, stoploss=None, takeprofit=None, price=0):
         _arm_reject(self)
-        ticket = self.trade(
-            symbol, "OPEN", 0, "buy",
-            volume, stoploss or 0, takeprofit or 0, price, None, None,
-        )
-        if not stoploss and not takeprofit:
-            _wait_fill_or_reject(self, ticket)
+        try:
+            ticket = self.trade(
+                symbol, "OPEN", 0, "buy",
+                volume, stoploss or 0, takeprofit or 0, price, None, None,
+            )
+            if not stoploss and not takeprofit:
+                _wait_fill_or_reject(self, ticket)
+        except OrderRejected as exc:
+            if exc.timeout and exc.clid and exc.clid not in getattr(
+                self.fix, "rejected", {}
+            ):
+                _cancel_pending(self, exc.clid)
+            raise
         return ticket
 
     def _fixed_sell(self, symbol, volume, stoploss=None, takeprofit=None, price=0):
         _arm_reject(self)
-        ticket = self.trade(
-            symbol, "OPEN", 1, "sell",
-            volume, stoploss or 0, takeprofit or 0, price, None, None,
-        )
-        if not stoploss and not takeprofit:
-            _wait_fill_or_reject(self, ticket)
+        try:
+            ticket = self.trade(
+                symbol, "OPEN", 1, "sell",
+                volume, stoploss or 0, takeprofit or 0, price, None, None,
+            )
+            if not stoploss and not takeprofit:
+                _wait_fill_or_reject(self, ticket)
+        except OrderRejected as exc:
+            if exc.timeout and exc.clid and exc.clid not in getattr(
+                self.fix, "rejected", {}
+            ):
+                _cancel_pending(self, exc.clid)
+            raise
         return ticket
 
     if not getattr(cls.buy, "_order_patched", False):
