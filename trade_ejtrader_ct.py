@@ -144,10 +144,15 @@ def main():
     tp = float(args.tp) if args.tp is not None else 0
 
     print(f"[ORDER] Market {side.upper()} {args.amount} {symbol} ({units} units)")
-    if side == "buy":
-        ticket = api.buy(symbol, args.amount, sl, tp)
-    else:
-        ticket = api.sell(symbol, args.amount, sl, tp)
+    try:
+        if side == "buy":
+            ticket = api.buy(symbol, args.amount, sl, tp)
+        else:
+            ticket = api.sell(symbol, args.amount, sl, tp)
+    except trade_log.OrderRejected as exc:
+        print(f"[ERROR] Order rejected: {exc}")
+        api.logout()
+        os._exit(1)
     print(f"[ORDER] Sent, ticket={ticket}")
 
     if sl or tp:
