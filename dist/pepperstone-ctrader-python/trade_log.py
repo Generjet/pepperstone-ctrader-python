@@ -213,6 +213,8 @@ def _patch_reject_handling(module):
             rejected[clid] = reason
         logging.warning("[ORDER REJECTED] %s: %s", clid or "?", reason)
 
+    original_exec_report = dispatch["8"]
+
     def _exec_report(self, msg):
         exec_type = msg[150]
         ord_status = msg[39]
@@ -224,7 +226,7 @@ def _patch_reject_handling(module):
                 or "rejected"
             )
             _record_reject(self, clid, reason)
-        return dispatch["8"](self, msg)
+        return original_exec_report(self, msg)
 
     def _reject_wrapper(self, msg):
         text = msg[58] or ""
